@@ -50,11 +50,11 @@ jobs:
           cat > .env << EOF
           OLLAMA_BASE_URL=${{ secrets.OLLAMA_BASE_URL }}
           OLLAMA_MODEL=${{ secrets.OLLAMA_MODEL }}
-          MYSQL_HOST=127.0.0.1
-          MYSQL_PORT=3306
-          MYSQL_USER=root
+          MYSQL_HOST=${{ secrets.MYSQL_HOST }}
+          MYSQL_PORT=${{ secrets.MYSQL_PORT }}
+          MYSQL_USER=${{ secrets.MYSQL_USER }}
           MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
-          MYSQL_DATABASE=sion_agv
+          MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
           EOF
 
       - name: 서버에 파일 복사
