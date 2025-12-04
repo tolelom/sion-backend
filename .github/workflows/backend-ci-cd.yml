@@ -1,0 +1,119 @@
+name: Sion Backend CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/backend-ci-cd.yml'
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v3
+
+      - name: Go 설정
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: 의존성 설치
+        run: go mod download
+
+      - name: 빌드 테스트
+        run: go build -v ./...
+
+      - name: 테스트 실행
+        run: go test -v ./...
+
+  deploy:
+    name: Deploy to Mac Mini
+    needs: build-test
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v3
+
+      - name: macOS ARM64용 바이너리 빌드
+        run: GOOS=darwin GOARCH=arm64 go build -o sion-backend main.go
+
+      - name: .env 파일 생성
+        run: |
+          cat > .env << EOF
+          OLLAMA_BASE_URL=${{ secrets.OLLAMA_BASE_URL }}
+          OLLAMA_MODEL=${{ secrets.OLLAMA_MODEL }}
+          MYSQL_HOST=127.0.0.1
+          MYSQL_PORT=3306
+          MYSQL_USER=root
+          MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_DATABASE=sion_agv
+          EOF
+
+      - name: 서버에 파일 복사
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          source: "sion-backend,.env"
+          target: "/Users/tolelom/Desktop/projects/sion-backend"
+
+      - name: logs 디렉토리 생성 및 프로세스 재시작
+        uses: appleboy/ssh-action@v0.1.8
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          script: |
+            cd /Users/tolelom/Desktop/projects/sion-backend
+            mkdir -p logs
+            chmod +x sion-backend
+            
+            # 기존 프로세스 종료
+            pkill -f "sion-backend" || true
+            sleep 2
+            
+            # 새 프로세스 시작
+            nohup ./sion-backend > ./logs/stdout.log 2> ./logs/stderr.log &
+            sleep 3
+            
+            # 프로세스 확인
+            if pgrep -f "sion-backend" > /dev/null; then
+              echo "✅ Sion Backend 시작 성공"
+              # 포트 확인
+              lsof -i :3000 || echo "⚠️ 포트 3000 확인 필요"
+            else
+              echo "❌ Sion Backend 시작 실패"
+              cat ./logs/stderr.log
+              exit 1
+            fi
+
+      - name: Health Check
+        uses: appleboy/ssh-action@v0.1.8
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: 22
+          script: |
+            for i in {1..10}; do
+              if curl -f http://localhost:3000/api/health > /dev/null 2>&1; then
+                echo "✅ Backend health check 성공"
+                exit 0
+              fi
+              echo "대기 중... ($i/10)"
+              sleep 2
+            done
+            echo "❌ Health check 실패"
+            cat /Users/tolelom/Desktop/projects/sion-backend/logs/stderr.log
+            exit 1
