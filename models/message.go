@@ -1,7 +1,5 @@
 package models
 
-import "time"
-
 // ========================================
 // 메시지 타입 상수
 // ========================================
@@ -42,14 +40,10 @@ type WebSocketMessage struct {
 }
 
 // ========================================
-// AGV 위치 데이터
+// AGV 위치 데이터 (⭐ agv.go의 PositionData와 동일해야 함)
+// 주의: PositionData는 agv.go에서만 정의하고 여기서는 제거됨
+// 이 파일에서 PositionData를 사용할 때는 models.PositionData 사용
 // ========================================
-type PositionData struct {
-	X         float64   `json:"x"`         // 현재 X 좌표 (미터)
-	Y         float64   `json:"y"`         // 현재 Y 좌표 (미터)
-	Angle     float64   `json:"angle"`     // 현재 각도 (라디안)
-	Timestamp time.Time `json:"timestamp"` // 측정 시각
-}
 
 // ========================================
 // 명령 메시지
@@ -79,17 +73,17 @@ type PathData struct {
 	Points    []PositionData `json:"points"`     // 경로 포인트 리스트
 	Length    float64        `json:"length"`     // 전체 경로 길이
 	Algorithm string         `json:"algorithm"`  // "a_star" | "dijkstra"
-	CreatedAt time.Time      `json:"created_at"` // 경로 생성 시각
+	CreatedAt int64          `json:"created_at"` // 경로 생성 시각 (Unix timestamp in milliseconds)
 }
 
 // ========================================
 // LLM 설명 데이터
 // ========================================
 type LLMExplanation struct {
-	Text      string    `json:"text"`      // 설명 텍스트
-	Action    string    `json:"action"`    // 현재 행동 ("moving", "attacking", "searching")
-	Reason    string    `json:"reason"`    // 행동 이유
-	Timestamp time.Time `json:"timestamp"` // 생성 시각
+	Text      string `json:"text"`      // 설명 텍스트
+	Action    string `json:"action"`    // 현재 행동 ("moving", "attacking", "searching")
+	Reason    string `json:"reason"`    // 행동 이유
+	Timestamp int64  `json:"timestamp"` // 생성 시각 (Unix timestamp in milliseconds)
 }
 
 // ========================================
@@ -105,10 +99,10 @@ type TTSData struct {
 // 시스템 정보
 // ========================================
 type SystemInfo struct {
-	ConnectedClients int       `json:"connected_clients"` // 연결된 클라이언트 수
-	AGVConnected     bool      `json:"agv_connected"`     // AGV 연결 상태
-	ServerTime       time.Time `json:"server_time"`       // 서버 시각
-	Uptime           int64     `json:"uptime"`            // 가동 시간 (초)
+	ConnectedClients int   `json:"connected_clients"` // 연결된 클라이언트 수
+	AGVConnected     bool  `json:"agv_connected"`     // AGV 연결 상태
+	ServerTime       int64 `json:"server_time"`       // 서버 시각 (Unix timestamp in milliseconds)
+	Uptime           int64 `json:"uptime"`            // 가동 시간 (초)
 }
 
 // ========================================
@@ -117,21 +111,21 @@ type SystemInfo struct {
 
 // ChatMessageData - 사용자 채팅 메시지
 type ChatMessageData struct {
-	Message   string `json:"message"`
-	Timestamp int64  `json:"timestamp"`
+	Message   string `json:"message"`   // 사용자 메시지
+	Timestamp int64  `json:"timestamp"` // Unix timestamp in milliseconds
 }
 
 // ChatResponseData - AI 응답 데이터
 type ChatResponseData struct {
-	Message   string `json:"message"`
-	Model     string `json:"model,omitempty"`
-	Timestamp int64  `json:"timestamp"`
+	Message   string `json:"message"`            // AI 응답
+	Model     string `json:"model,omitempty"`   // 사용된 모델
+	Timestamp int64  `json:"timestamp"`         // Unix timestamp in milliseconds
 }
 
 // AGVEventData - AGV 이벤트 설명 데이터
 type AGVEventData struct {
-	EventType   string       `json:"event_type"` // "target_change", "path_start", "charging", "avoid_obstacle"
-	Explanation string       `json:"explanation"`
-	Position    PositionData `json:"position,omitempty"`
-	Timestamp   int64        `json:"timestamp"`
+	EventType   string          `json:"event_type"` // "target_change", "path_start", "charging", "avoid_obstacle"
+	Explanation string          `json:"explanation"`
+	Position    *PositionData   `json:"position,omitempty"` // 이벤트 발생 위치 (옵션)
+	Timestamp   int64           `json:"timestamp"`          // Unix timestamp in milliseconds
 }
