@@ -32,6 +32,7 @@ func NewAGVSimulator(broadcastFunc func(models.WebSocketMessage)) *AGVSimulator 
 				X:     5.0,
 				Y:     5.0,
 				Angle: 0,
+				Timestamp: float64(time.Now().UnixMilli()) / 1000.0, // Unix timestamp in seconds
 			},
 			Mode:    models.ModeAuto,
 			State:   models.StateIdle,
@@ -278,13 +279,17 @@ func (sim *AGVSimulator) broadcastStatus() {
 		Timestamp: time.Now().UnixMilli(),
 	}
 
+	// ⭐ 중요: Timestamp를 float64로 변환 (Unix timestamp in seconds with milliseconds)
+	currentTime := time.Now()
+	timestampFloat := float64(currentTime.UnixMilli()) / 1000.0 // Convert ms to seconds
+
 	positionMsg := models.WebSocketMessage{
 		Type: models.MessageTypePosition,
 		Data: models.PositionData{
 			X:         sim.Status.Position.X,
 			Y:         sim.Status.Position.Y,
 			Angle:     sim.Status.Position.Angle,
-			Timestamp: time.Now(),
+			Timestamp: timestampFloat, // ✅ float64로 할당
 		},
 		Timestamp: time.Now().UnixMilli(),
 	}
@@ -303,8 +308,9 @@ func generateRandomEnemies(count int, mapWidth, mapHeight float64) []models.Enem
 			Name: enemyNames[rand.Intn(len(enemyNames))],
 			HP:   rand.Intn(81) + 20,
 			Position: models.PositionData{
-				X: rand.Float64() * mapWidth,
-				Y: rand.Float64() * mapHeight,
+				X:         rand.Float64() * mapWidth,
+				Y:         rand.Float64() * mapHeight,
+				Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
 			},
 		}
 	}
