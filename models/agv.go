@@ -20,6 +20,22 @@ const (
 	StateEmergency = "emergency" // 긴급 정지
 )
 
+// AGVMode - AGV 모드 타입
+type AGVMode string
+
+// AGVState - AGV 상태 타입
+type AGVState string
+
+// ========================================
+// AGV 등록 정보
+// ========================================
+type AGVRegistration struct {
+	AgentID   string          `json:"agent_id"`   // AGV ID
+	Mode      AGVMode         `json:"mode"`       // 초기 모드
+	Position  PositionData    `json:"position"`   // 초기 위치
+	Timestamp int64           `json:"timestamp"`  // 등록 시간
+}
+
 // ========================================
 // AGV 전체 상태
 // ========================================
@@ -34,8 +50,8 @@ type AGVStatus struct {
 	Position PositionData `json:"position"` // 현재 위치
 
 	// 운영 상태
-	Mode    string  `json:"mode"`    // "auto" | "manual"
-	State   string  `json:"state"`   // 현재 상태
+	Mode    AGVMode `json:"mode"`    // "auto" | "manual"
+	State   AGVState `json:"state"`   // 현재 상태
 	Speed   float64 `json:"speed"`   // 현재 속도 (m/s)
 	Battery int     `json:"battery"` // 배터리 잔량 (0-100%)
 
