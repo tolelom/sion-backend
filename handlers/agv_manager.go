@@ -18,15 +18,15 @@ type AGVManager struct {
 
 // AGVInfo - AGV의 정보
 type AGVInfo struct {
-	ID              string              // AGV ID
-	RegisteredAt    time.Time           // 등록 시간
-	LastUpdate      time.Time           // 마지막 업데이트 시간
-	Position        models.PositionData // 현재 위치
-	Mode            models.AGVMode      // auto/manual
-	State           models.AGVState     // idle/moving/charging
-	Battery         float64             // 0-100%
-	Speed           float64             // m/s
-	DetectedEnemies []models.Enemy      // 탐지된 적
+	ID              string              `json:"id"`               // AGV ID
+	RegisteredAt    time.Time           `json:"registered_at"`    // 등록 시간
+	LastUpdate      time.Time           `json:"last_update"`      // 마지막 업데이트 시간
+	Position        models.PositionData `json:"position"`         // 현재 위치
+	Mode            models.AGVMode      `json:"mode"`            // auto/manual
+	State           models.AGVState     `json:"state"`           // idle/moving/charging
+	Battery         float64             `json:"battery"`         // 0-100%
+	Speed           float64             `json:"speed"`           // m/s
+	DetectedEnemies []models.Enemy      `json:"detected_enemies"` // 탐지된 적
 }
 
 // NewAGVManager - AGV Manager 생성
