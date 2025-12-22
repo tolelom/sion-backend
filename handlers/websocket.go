@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log"
 	"sion-backend/models"
 	"sion-backend/services"
@@ -13,6 +14,7 @@ import (
 type Client struct {
 	Conn       *websocket.Conn
 	ClientType string // "agv" 또는 "web"
+	AGVID      string // AGV 타입일 경우 AGV ID
 }
 
 // 클라이언트 관리자
@@ -27,10 +29,13 @@ type ClientManager struct {
 // 전역 클라이언트 관리자
 var Manager = &ClientManager{
 	clients:    make(map[*websocket.Conn]*Client),
-	broadcast:  make(chan models.WebSocketMessage, 100),
+	broadcast:  make(chan models.WebSocketMessage, 256),
 	register:   make(chan *Client),
 	unregister: make(chan *websocket.Conn),
 }
+
+// 전역 AGV Manager (main.go에서 초기화)
+var AGVMgr *AGVManager
 
 // 클라이언트 관리 시작
 func (manager *ClientManager) Start() {
@@ -40,16 +45,21 @@ func (manager *ClientManager) Start() {
 			manager.mutex.Lock()
 			manager.clients[client.Conn] = client
 			manager.mutex.Unlock()
-			log.Printf("클라이언트 등록: %s (%s)", client.ClientType, client.Conn.RemoteAddr())
+			log.Printf("[Manager] 클라이언트 등록: %s (%s)", client.ClientType, client.Conn.RemoteAddr())
 
 		case conn := <-manager.unregister:
 			manager.mutex.Lock()
 			if client, ok := manager.clients[conn]; ok {
 				delete(manager.clients, conn)
 				_ = conn.Close()
-				log.Printf("클라이언트 해제: %s (%s)", client.ClientType, conn.RemoteAddr())
+				// AGV 연결 해제 시 Manager에서도 제거
+				if client.ClientType == "agv" && client.AGVID != "" && AGVMgr != nil {
+					_ = AGVMgr.RemoveAGV(client.AGVID)
+				}
+				log.Printf("[Manager] 클라이언트 해제: %s (%s)", client.ClientType, conn.RemoteAddr())
 			}
 			manager.mutex.Unlock()
+
 		case message := <-manager.broadcast:
 			manager.handleBroadcast(message)
 		}
@@ -96,7 +106,7 @@ func (manager *ClientManager) handleBroadcast(message models.WebSocketMessage) {
 		if shouldSend {
 			err := conn.WriteJSON(message)
 			if err != nil {
-				log.Printf("전송 실패 (%s): %v", client.ClientType, err)
+				log.Printf("[Manager] 전송 실패 (%s): %v", client.ClientType, err)
 				manager.unregister <- conn
 			}
 		}
@@ -137,11 +147,14 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 		Manager.unregister <- c
 	}()
 
+	var agvID string
+	var isRegistered bool
+
 	for {
 		var msg models.WebSocketMessage
 		err := c.ReadJSON(&msg)
 		if err != nil {
-			log.Printf("AGV 메시지 읽기 오류: %v", err)
+			log.Printf("[AGV] 메시지 읽기 오류: %v", err)
 			break
 		}
 
@@ -150,13 +163,133 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 			msg.Timestamp = time.Now().UnixMilli()
 		}
 
-		// 🆕 로깅 추가
-		go services.LogAGVEvent(msg, "sion-001", "agv")
+		log.Printf("[AGV] 메시지 타입: %s, 데이터: %+v", msg.Type, msg.Data)
 
-		log.Printf("AGV 메시지: %s - %+v", msg.Type, msg.Data)
+		// 처음 메시지: registration 또는 status
+		switch msg.Type {
+		case "registration":
+			// AGV 등록
+			data, err := json.Marshal(msg.Data)
+			if err != nil {
+				log.Printf("[AGV] JSON 마샬링 실패: %v", err)
+				continue
+			}
 
-		// 모든 메시지 브로드캐스트
-		Manager.broadcast <- msg
+			var reg models.AGVRegistration
+			err = json.Unmarshal(data, &reg)
+			if err != nil {
+				log.Printf("[AGV] 등록 메시지 파싱 실패: %v", err)
+				continue
+			}
+
+			if AGVMgr != nil {
+				info, err := AGVMgr.RegisterAGV(reg.AgentID)
+				if err != nil {
+					log.Printf("[AGV] 등록 실패: %v", err)
+					continue
+				}
+
+				agvID = reg.AgentID
+				client.AGVID = agvID
+				isRegistered = true
+
+				log.Printf("[AGV] ✅ 등록 완료: %s (위치: %.2f, %.2f)",
+					reg.AgentID, reg.Position.X, reg.Position.Y)
+
+				// 웹 클라이언트에 알림
+				notifyMsg := models.WebSocketMessage{
+					Type: models.MessageTypeSystemInfo,
+					Data: map[string]interface{}{
+						"event":  "agv_registered",
+						"agv_id": agvID,
+					},
+					Timestamp: time.Now().UnixMilli(),
+				}
+				Manager.BroadcastMessage(notifyMsg)
+			}
+
+		case models.MessageTypeStatus:
+			// AGV 상태 업데이트
+			if !isRegistered || agvID == "" {
+				log.Printf("[AGV] 상태 업데이트 전 등록 필요")
+				continue
+			}
+
+			// Status 메시지 파싱
+			data, err := json.Marshal(msg.Data)
+			if err != nil {
+				log.Printf("[AGV] JSON 마샬링 실패: %v", err)
+				continue
+			}
+
+			var statusData map[string]interface{}
+			err = json.Unmarshal(data, &statusData)
+			if err != nil {
+				log.Printf("[AGV] 상태 메시지 파싱 실패: %v", err)
+				continue
+			}
+
+			// 위치 추출
+			var pos models.PositionData
+			if posData, ok := statusData["position"]; ok {
+				posBytes, _ := json.Marshal(posData)
+				json.Unmarshal(posBytes, &pos)
+			}
+
+			// 상태 업데이트
+			var mode models.AGVMode = models.ModeAuto
+			var state models.AGVState = models.StateIdle
+			var battery float64 = 100.0
+			var speed float64 = 0.0
+
+			if m, ok := statusData["mode"]; ok {
+				if str, ok := m.(string); ok {
+					mode = models.AGVMode(str)
+				}
+			}
+			if s, ok := statusData["state"]; ok {
+				if str, ok := s.(string); ok {
+					state = models.AGVState(str)
+				}
+			}
+			if b, ok := statusData["battery"]; ok {
+				if bf, ok := b.(float64); ok {
+					battery = bf
+				}
+			}
+			if spd, ok := statusData["speed"]; ok {
+				if sf, ok := spd.(float64); ok {
+					speed = sf
+				}
+			}
+
+			if AGVMgr != nil {
+				err := AGVMgr.UpdateStatus(
+					agvID,
+					pos,
+					mode,
+					state,
+					battery,
+					speed,
+					[]models.Enemy{},
+				)
+				if err != nil {
+					log.Printf("[AGV] 상태 업데이트 실패: %v", err)
+				}
+			}
+
+			// 로깅
+			go services.LogAGVEvent(msg, agvID, "agv")
+
+			// 웹 클라이언트에 브로드캐스트
+			Manager.BroadcastMessage(msg)
+
+		default:
+			log.Printf("[AGV] 알 수 없는 메시지 타입: %s", msg.Type)
+			// 다른 메시지도 브로드캐스트
+			go services.LogAGVEvent(msg, agvID, "agv")
+			Manager.BroadcastMessage(msg)
+		}
 	}
 }
 
@@ -188,7 +321,7 @@ func HandleWebClientWebSocket(c *websocket.Conn) {
 		var msg models.WebSocketMessage
 		err := c.ReadJSON(&msg)
 		if err != nil {
-			log.Printf("웹 메시지 읽기 오류: %v", err)
+			log.Printf("[Web] 메시지 읽기 오류: %v", err)
 			break
 		}
 
@@ -197,12 +330,12 @@ func HandleWebClientWebSocket(c *websocket.Conn) {
 			msg.Timestamp = time.Now().UnixMilli()
 		}
 
-		// 🆕 로깅 추가
-		go services.LogAGVEvent(msg, "sion-001", "web-user")
+		log.Printf("[Web] 메시지: %s - %+v", msg.Type, msg.Data)
 
-		log.Printf("웹 메시지: %s - %+v", msg.Type, msg.Data)
+		// 로깅
+		go services.LogAGVEvent(msg, "", "web-user")
 
-		// 🆕 채팅 메시지 처리 (LLM AnswerQuestion 호출)
+		// 채팅 메시지 처리 (LLM AnswerQuestion 호출)
 		switch msg.Type {
 		case models.MessageTypeChat:
 			if chatData, ok := msg.Data.(map[string]interface{}); ok {
@@ -210,19 +343,14 @@ func HandleWebClientWebSocket(c *websocket.Conn) {
 					log.Printf("💬 사용자 질문: %s", message)
 
 					go func() {
-						// LLM 서비스만 체크, AGV 상태는 선택적
 						if llmService == nil {
-							log.Printf("⚠️ LLM 서비스가 초기화되지 않음")
+							log.Printf("⚠️  LLM 서비스가 초기화되지 않음")
 							return
 						}
 
-						// AGV 상태가 있으면 전달, 없으면 nil로 전달
 						var status *models.AGVStatus
 						if currentAGVStatus != nil {
 							status = currentAGVStatus
-							log.Printf("📊 AGV 상태 포함하여 LLM 호출")
-						} else {
-							log.Printf("📝 AGV 상태 없이 LLM 호출")
 						}
 
 						response, err := llmService.AnswerQuestion(message, status)
@@ -255,7 +383,7 @@ func HandleWebClientWebSocket(c *websocket.Conn) {
 			Manager.broadcast <- msg
 
 		default:
-			log.Printf("알 수 없는 메시지 타입: %s", msg.Type)
+			log.Printf("[Web] 알 수 없는 메시지 타입: %s", msg.Type)
 		}
 	}
 }
