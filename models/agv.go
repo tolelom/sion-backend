@@ -27,11 +27,23 @@ type AGVMode string
 type AGVState string
 
 // ========================================
+// 위치 데이터 (모든 AGV 통신에서 사용)
+// ========================================
+// ⭐ 중요: Timestamp는 float64 (Unix timestamp in seconds with milliseconds)
+// Python의 time.time()에서 직접 전달됨
+type PositionData struct {
+	X         float64 `json:"x"`         // X 좌표 (m)
+	Y         float64 `json:"y"`         // Y 좌표 (m)
+	Angle     float64 `json:"angle"`     // 회전 각도 (라디안)
+	Timestamp float64 `json:"timestamp"` // Unix timestamp (초 단위, float64) - Python time.time()과 호환
+}
+
+// ========================================
 // AGV 등록 정보
 // ========================================
 type AGVRegistration struct {
 	AgentID   string          `json:"agent_id"`   // AGV ID
-	Mode      AGVMode         `json:"mode"`       // 초기 모드
+	Mode      AGVMode         `json:"mode"`       // 초기 모드 (선택사항, 기본값: auto)
 	Position  PositionData    `json:"position"`   // 초기 위치
 	Timestamp int64           `json:"timestamp"`  // 등록 시간
 }
