@@ -166,7 +166,7 @@ func main() {
 				X:         10.5,
 				Y:         15.2,
 				Angle:     1.57,
-				Timestamp: time.Now(),
+				Timestamp: float64(time.Now().UnixMilli()) / 1000.0, // ✅ float64 Unix timestamp
 			},
 			Timestamp: time.Now().UnixMilli(),
 		}
@@ -196,7 +196,10 @@ func main() {
 			ID:   "sion-001",
 			Name: "Sion",
 			Position: models.PositionData{
-				X: 10.5, Y: 15.2, Angle: 0.785,
+				X:         10.5,
+				Y:         15.2,
+				Angle:     0.785,
+				Timestamp: float64(time.Now().UnixMilli()) / 1000.0, // ✅ float64 Unix timestamp
 			},
 			Mode:    models.ModeAuto,
 			State:   models.StateCharging,
