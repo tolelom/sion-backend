@@ -54,7 +54,7 @@ func (lb *LogBuffer) autoFlush() {
 // AddLog - 로그 버퍼에 추가 (비동기)
 func AddLog(logEntry models.AGVLog) {
 	if logBuffer == nil {
-		log.Println("⚠️ 로깅 시스템이 초기화되지 않음")
+		log.Println("⚠️  로깅 시스템이 초기화되지 않음")
 		return
 	}
 
@@ -120,8 +120,8 @@ func LogAGVStatus(agvID string, status *models.AGVStatus) {
 		PositionAngle: status.Position.Angle,
 		Speed:         status.Speed,
 		Battery:       status.Battery,
-		Mode:          status.Mode,
-		State:         status.State,
+		Mode:          string(status.Mode),
+		State:         string(status.State),
 	}
 
 	// 타겟 정보
