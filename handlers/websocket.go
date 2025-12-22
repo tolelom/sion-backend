@@ -97,7 +97,7 @@ func (manager *ClientManager) handleBroadcast(message models.WebSocketMessage) {
 			models.MessageTypeTTS,
 			models.MessageTypeMapUpdate,
 			models.MessageTypeSystemInfo,
-			"agv_status_update": // ★ 추가: Frontend가 대기하는 타입
+			"agv_status_update": // ★ Frontend가 대기하는 타입
 			// 모든 Web 클라이언트에게 전송
 			if client.ClientType == "web" {
 				shouldSend = true
@@ -170,18 +170,32 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 		switch msg.Type {
 		case "registration":
 			// AGV 등록
+			log.Printf("[AGV] 🔍 Registration 메시지 처리 시작")
+			
 			data, err := json.Marshal(msg.Data)
 			if err != nil {
 				log.Printf("[AGV] JSON 마샬링 실패: %v", err)
 				continue
 			}
 
+			log.Printf("[AGV] Raw registration data: %s", string(data)) // 디버깅용
+
 			var reg models.AGVRegistration
 			err = json.Unmarshal(data, &reg)
 			if err != nil {
 				log.Printf("[AGV] 등록 메시지 파싱 실패: %v", err)
+				log.Printf("[AGV] Expected: AgentID, optional Mode, Position, Timestamp")
 				continue
 			}
+
+			// ★ Mode가 없으면 기본값 설정
+			if reg.Mode == "" {
+				reg.Mode = models.ModeAuto
+				log.Printf("[AGV] Mode가 없음, 기본값 설정: %s", models.ModeAuto)
+			}
+
+			log.Printf("[AGV] Parsed - AgentID: %s, Mode: %s, Position: (%.2f, %.2f)",
+				reg.AgentID, reg.Mode, reg.Position.X, reg.Position.Y)
 
 			if AGVMgr != nil {
 				_, err := AGVMgr.RegisterAGV(reg.AgentID)
@@ -190,12 +204,13 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 					continue
 				}
 
+				// ★ 중요: 이 부분이 실행되어야 isRegistered가 true가 됨
 				agvID = reg.AgentID
 				client.AGVID = agvID
 				isRegistered = true
 
-				log.Printf("[AGV] ✅ 등록 완료: %s (위치: %.2f, %.2f)",
-					reg.AgentID, reg.Position.X, reg.Position.Y)
+				log.Printf("[AGV] ✅ 등록 완료: %s (isRegistered=%v, Position: %.2f, %.2f)",
+					reg.AgentID, isRegistered, reg.Position.X, reg.Position.Y)
 
 				// 웹 클라이언트에 알림
 				notifyMsg := models.WebSocketMessage{
@@ -212,9 +227,11 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 		case models.MessageTypeStatus:
 			// AGV 상태 업데이트
 			if !isRegistered || agvID == "" {
-				log.Printf("[AGV] 상태 업데이트 전 등록 필요")
+				log.Printf("[AGV] ⚠️  상태 업데이트 전 등록 필요 (isRegistered=%v, agvID=%s)", isRegistered, agvID)
 				continue
 			}
+
+			log.Printf("[AGV] Status 메시지 처리: isRegistered=%v, agvID=%s", isRegistered, agvID)
 
 			// Status 메시지 파싱
 			data, err := json.Marshal(msg.Data)
@@ -276,7 +293,7 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 				)
 				if err != nil {
 					log.Printf("[AGV] 상태 업데이트 실패: %v", err)
-					continue // ★ 수정: 오류 시 진행 중단
+					continue // ★ 오류 시 진행 중단
 				}
 
 				// ★ 중요: 모든 웹 클라이언트에게 명시적으로 AGV 상태 브로드캐스트
@@ -298,8 +315,7 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 			// 로깅만 수행 (원본 메시지는 브로드캐스트하지 않음)
 			go services.LogAGVEvent(msg, agvID, "agv")
 
-			// ★ 주의: 다음 줄 제거됨 (원본 "status" 메시지 전송 불필요)
-			// Manager.BroadcastMessage(msg)
+			// ★ 원본 "status" 메시지는 브로드캐스트하지 않음
 
 		default:
 			log.Printf("[AGV] 알 수 없는 메시지 타입: %s", msg.Type)
