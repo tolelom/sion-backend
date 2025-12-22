@@ -14,29 +14,91 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// 🆕 전역 시뮬레이터 인스턴스
 var agvSimulator *services.AGVSimulator
+var agvMgr *handlers.AGVManager
+
+func setupAGVAPI(api fiber.Router, agvMgr *handlers.AGVManager) {
+	agvAPI := api.Group("/agv")
+
+	agvAPI.Get("/status/:id", func(c *fiber.Ctx) error {
+		agvID := c.Params("id")
+		info, err := agvMgr.GetStatus(agvID)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{
+				"success": false,
+				"error":   err.Error(),
+			})
+		}
+		return c.JSON(fiber.Map{
+			"success": true,
+			"data": fiber.Map{
+				"id":       info.ID,
+				"position": info.Position,
+				"mode":     info.Mode,
+				"state":    info.State,
+				"battery":  info.Battery,
+				"speed":    info.Speed,
+			},
+		})
+	})
+
+	agvAPI.Get("/all", func(c *fiber.Ctx) error {
+		statuses := agvMgr.GetAllStatuses()
+		data := make([]interface{}, len(statuses))
+		for i, info := range statuses {
+			data[i] = fiber.Map{
+				"id":       info.ID,
+				"position": info.Position,
+				"mode":     info.Mode,
+				"state":    info.State,
+				"battery":  info.Battery,
+				"speed":    info.Speed,
+			}
+		}
+		return c.JSON(fiber.Map{
+			"success": true,
+			"count":   len(data),
+			"data":    data,
+		})
+	})
+
+	agvAPI.Get("/stats", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"success": true,
+			"data":    agvMgr.GetStatistics(),
+		})
+	})
+}
 
 func main() {
-	// .env 파일 로드
 	if err := godotenv.Load(); err != nil {
-		log.Println("⚠️  .env 파일을 찾을 수 없습니다.")
+		log.Println("⚠️  .env file not found")
 	}
 
-	// MySQL 연결
 	if err := services.InitDatabase(); err != nil {
-		log.Fatalf("❌ DB 초기화 실패: %v", err)
+		log.Fatalf("❌ DB init failed: %v", err)
 	}
 
-	// 로깅 시스템 초기화
 	services.InitLogging(50, 10*time.Second)
 	defer services.StopLogging()
 
-	// LLM 서비스 초기화
 	handlers.InitLLMService()
-
-	// 🆕 AGV 시뮬레이터 초기화
 	agvSimulator = services.NewAGVSimulator(handlers.Manager.BroadcastMessage)
+
+	agvMgr = handlers.NewAGVManager()
+	handlers.AGVMgr = agvMgr
+	log.Println("[Main] ✅ AGV Manager initialized")
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			count := agvMgr.CleanupOfflineAGVs(10 * time.Second)
+			if count > 0 {
+				log.Printf("[Main] Cleaned up %d offline AGVs", count)
+			}
+		}
+	}()
 
 	app := fiber.New()
 
@@ -50,76 +112,53 @@ func main() {
 	go handlers.Manager.Start()
 
 	app.Get("/", func(c *fiber.Ctx) error {
-		return c.SendString("Sion WebSocket 서버가 실행 중입니다.")
+		return c.SendString("Sion WebSocket server running")
 	})
 
 	api := app.Group("/api")
 
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"status":  "OK",
-			"clients": handlers.Manager.GetClientCount(),
-			"time":    time.Now().Format(time.RFC3339),
+			"status":         "OK",
+			"clients":        handlers.Manager.GetClientCount(),
+			"connected_agvs": agvMgr.GetConnectedAGVs(),
+			"agv_count":      agvMgr.GetAGVCount(),
+			"time":           time.Now().Format(time.RFC3339),
 		})
 	})
 
-	// 채팅 엔드포인트
 	api.Post("/chat", handlers.HandleChat)
-
-	// 경로 탐색
 	api.Post("/pathfinding", handlers.HandlePathfinding)
 
-	// 로그 조회 API
 	logsAPI := api.Group("/logs")
 	logsAPI.Get("/recent", handlers.HandleGetRecentLogs)
 	logsAPI.Get("/range", handlers.HandleGetLogsByTimeRange)
 	logsAPI.Get("/type", handlers.HandleGetLogsByEventType)
 	logsAPI.Get("/stats", handlers.HandleGetLogStats)
 
-	// 🆕 시뮬레이터 API
+	setupAGVAPI(api, agvMgr)
+
 	simAPI := api.Group("/simulator")
 	simAPI.Post("/start", func(c *fiber.Ctx) error {
 		if agvSimulator.IsRunning {
-			return c.Status(400).JSON(fiber.Map{
-				"success": false,
-				"message": "시뮬레이터가 이미 실행 중입니다",
-			})
+			return c.Status(400).JSON(fiber.Map{"success": false})
 		}
 		agvSimulator.Start()
-		return c.JSON(fiber.Map{
-			"success": true,
-			"message": "AGV 시뮬레이터 시작",
-		})
+		return c.JSON(fiber.Map{"success": true})
 	})
 
 	simAPI.Post("/stop", func(c *fiber.Ctx) error {
 		if !agvSimulator.IsRunning {
-			return c.Status(400).JSON(fiber.Map{
-				"success": false,
-				"message": "시뮬레이터가 실행 중이 아닙니다",
-			})
+			return c.Status(400).JSON(fiber.Map{"success": false})
 		}
 		agvSimulator.Stop()
-		return c.JSON(fiber.Map{
-			"success": true,
-			"message": "AGV 시뮬레이터 중지",
-		})
+		return c.JSON(fiber.Map{"success": true})
 	})
 
 	simAPI.Get("/status", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"success":   true,
-			"running":   agvSimulator.IsRunning,
-			"agv_state": agvSimulator.Status,
-			"enemies":   agvSimulator.Enemies,
-			"map_size": fiber.Map{
-				"width":  agvSimulator.MapWidth,
-				"height": agvSimulator.MapHeight,
-			},
-		})
+		return c.JSON(fiber.Map{"success": true, "running": agvSimulator.IsRunning})
 	})
 
-	// 테스트용 위치 데이터 전송
 	api.Post("/test/position", func(c *fiber.Ctx) error {
 		testMsg := models.WebSocketMessage{
 			Type: models.MessageTypePosition,
@@ -131,17 +170,11 @@ func main() {
 			},
 			Timestamp: time.Now().UnixMilli(),
 		}
-
 		handlers.Manager.BroadcastMessage(testMsg)
 		services.LogAGVPosition("sion-001", testMsg.Data.(models.PositionData))
-
-		return c.JSON(fiber.Map{
-			"success": true,
-			"message": "테스트 데이터 전송 성공",
-		})
+		return c.JSON(fiber.Map{"success": true})
 	})
 
-	// 테스트용 상태 데이터 전송
 	api.Post("/test/status", func(c *fiber.Ctx) error {
 		testMsg := models.WebSocketMessage{
 			Type: models.MessageTypeStatus,
@@ -153,21 +186,15 @@ func main() {
 			},
 			Timestamp: time.Now().UnixMilli(),
 		}
-
 		handlers.Manager.BroadcastMessage(testMsg)
 		services.LogWebSocketMessage("sion-001", testMsg)
-
-		return c.JSON(fiber.Map{
-			"success": true,
-			"message": "상태 데이터 전송 성공",
-		})
+		return c.JSON(fiber.Map{"success": true})
 	})
 
-	// 테스트용 AGV 이벤트 트리거
 	api.Post("/test/event", func(c *fiber.Ctx) error {
 		testStatus := &models.AGVStatus{
 			ID:   "sion-001",
-			Name: "사이온",
+			Name: "Sion",
 			Position: models.PositionData{
 				X: 10.5, Y: 15.2, Angle: 0.785,
 			},
@@ -175,43 +202,12 @@ func main() {
 			State:   models.StateCharging,
 			Speed:   2.5,
 			Battery: 85,
-			TargetEnemy: &models.Enemy{
-				ID:       "enemy-1",
-				Name:     "아리",
-				HP:       30,
-				Position: models.PositionData{X: 15, Y: 12},
-			},
-			DetectedEnemies: []models.Enemy{
-				{
-					ID:       "enemy-1",
-					Name:     "아리",
-					HP:       30,
-					Position: models.PositionData{X: 15, Y: 12},
-				},
-				{
-					ID:       "enemy-2",
-					Name:     "아리",
-					HP:       80,
-					Position: models.PositionData{X: 20, Y: 18},
-				},
-			},
 		}
-
 		services.LogAGVStatus("sion-001", testStatus)
-
-		if testStatus.TargetEnemy != nil {
-			services.LogTargetFound("sion-001", testStatus.TargetEnemy)
-		}
-
 		handlers.ExplainAGVEvent("target_change", testStatus)
-
-		return c.JSON(fiber.Map{
-			"success": true,
-			"message": "이벤트 설명 생성 중...",
-		})
+		return c.JSON(fiber.Map{"success": true})
 	})
 
-	// WebSocket
 	app.Use("/websocket", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			c.Locals("allowed", true)
@@ -223,11 +219,14 @@ func main() {
 	app.Get("/websocket/agv", websocket.New(handlers.HandleAGVWebSocket))
 	app.Get("/websocket/web", websocket.New(handlers.HandleWebClientWebSocket))
 
-	log.Println("🚀 서버 시작: http://localhost:3000")
-	log.Println("📡 WebSocket: ws://localhost:3000/websocket/web")
-	log.Println("💬 채팅 API: POST http://localhost:3000/api/chat")
-	log.Println("🧪 이벤트 테스트: POST http://localhost:3000/api/test/event")
-	log.Println("💾 로그 API: GET http://localhost:3000/api/logs/*")
-	log.Println("🤖 시뮬레이터 API: POST http://localhost:3000/api/simulator/*")
+	log.Println("================================================")
+	log.Println("🚀 Sion Backend Server")
+	log.Println("================================================")
+	log.Println("📡 WebSocket AGV: ws://localhost:3000/websocket/agv")
+	log.Println("📡 WebSocket Web: ws://localhost:3000/websocket/web")
+	log.Println("🔍 AGV Status:    GET /api/agv/all")
+	log.Println("💾 Health Check:  GET /api/health")
+	log.Println("================================================")
+
 	log.Fatal(app.Listen(":3000"))
 }
