@@ -12,21 +12,21 @@ import (
 // AGVManager - AGV(자율주행 로봇) 상태 관리
 type AGVManager struct {
 	mu       sync.RWMutex
-	agvs     map[string]*AGVInfo    // agv_id -> AGVInfo
-	lastPing map[string]time.Time   // agv_id -> 마지막 Ping 시간
+	agvs     map[string]*AGVInfo  // agv_id -> AGVInfo
+	lastPing map[string]time.Time // agv_id -> 마지막 Ping 시간
 }
 
 // AGVInfo - AGV의 정보
 type AGVInfo struct {
-	ID              string                 // AGV ID
-	RegisteredAt    time.Time              // 등록 시간
-	LastUpdate      time.Time              // 마지막 업데이트 시간
-	Position        models.PositionData    // 현재 위치
-	Mode            models.AGVMode         // auto/manual
-	State           models.AGVState        // idle/moving/charging
-	Battery         float64                // 0-100%
-	Speed           float64                // m/s
-	DetectedEnemies []models.Enemy         // 탐지된 적
+	ID              string              // AGV ID
+	RegisteredAt    time.Time           // 등록 시간
+	LastUpdate      time.Time           // 마지막 업데이트 시간
+	Position        models.PositionData // 현재 위치
+	Mode            models.AGVMode      // auto/manual
+	State           models.AGVState     // idle/moving/charging
+	Battery         float64             // 0-100%
+	Speed           float64             // m/s
+	DetectedEnemies []models.Enemy      // 탐지된 적
 }
 
 // NewAGVManager - AGV Manager 생성
@@ -68,7 +68,7 @@ func (m *AGVManager) RegisterAGV(agvID string) (*AGVInfo, error) {
 			X:         0,
 			Y:         0,
 			Angle:     0,
-			Timestamp: now,
+			Timestamp: float64(now.UnixMilli()) / 1000.0, // Unix timestamp (seconds with ms)
 		},
 		Mode:    models.ModeAuto,
 		State:   models.StateIdle,
@@ -106,7 +106,7 @@ func (m *AGVManager) UpdateStatus(
 	now := time.Now()
 
 	// 위치 업데이트
-	position.Timestamp = now
+	position.Timestamp = float64(now.UnixMilli()) / 1000.0 // Unix timestamp (seconds with ms)
 	info.Position = position
 
 	// 상태 업데이트
