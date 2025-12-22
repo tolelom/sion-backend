@@ -96,7 +96,8 @@ func (manager *ClientManager) handleBroadcast(message models.WebSocketMessage) {
 		case models.MessageTypeLLMExplanation,
 			models.MessageTypeTTS,
 			models.MessageTypeMapUpdate,
-			models.MessageTypeSystemInfo:
+			models.MessageTypeSystemInfo,
+			"agv_status_update": // ★ 추가: Frontend가 대기하는 타입
 			// 모든 Web 클라이언트에게 전송
 			if client.ClientType == "web" {
 				shouldSend = true
@@ -275,13 +276,15 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 				)
 				if err != nil {
 					log.Printf("[AGV] 상태 업데이트 실패: %v", err)
+					continue // ★ 수정: 오류 시 진행 중단
 				}
 
 				// ★ 중요: 모든 웹 클라이언트에게 명시적으로 AGV 상태 브로드캐스트
+				// Frontend에서 "agv_status_update" 타입을 대기 중
 				statuses := AGVMgr.GetAllStatuses()
 				if len(statuses) > 0 {
 					statusMsg := models.WebSocketMessage{
-						Type: "agv_status_update",
+						Type: "agv_status_update", // ★ Frontend가 인식하는 타입
 						Data: map[string]interface{}{
 							"agvs": statuses,
 						},
@@ -292,11 +295,11 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 				}
 			}
 
-			// 로깅
+			// 로깅만 수행 (원본 메시지는 브로드캐스트하지 않음)
 			go services.LogAGVEvent(msg, agvID, "agv")
 
-			// 원본 메시지도 브로드캐스트 (로깅용)
-			Manager.BroadcastMessage(msg)
+			// ★ 주의: 다음 줄 제거됨 (원본 "status" 메시지 전송 불필요)
+			// Manager.BroadcastMessage(msg)
 
 		default:
 			log.Printf("[AGV] 알 수 없는 메시지 타입: %s", msg.Type)
