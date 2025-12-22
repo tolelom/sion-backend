@@ -85,13 +85,20 @@ func ExplainAGVEvent(eventType string, agvStatus *models.AGVStatus) {
 			return
 		}
 
+		// PositionData를 포인터로 전달 (AGVEventData.Position은 *PositionData)
+		var pos *models.PositionData
+		if agvStatus != nil {
+			p := agvStatus.Position
+			pos = &p
+		}
+
 		// WebSocket으로 브로드캐스트
 		eventMsg := models.WebSocketMessage{
 			Type: models.MessageTypeAGVEvent,
 			Data: models.AGVEventData{
 				EventType:   eventType,
 				Explanation: explanation,
-				Position:    agvStatus.Position,
+				Position:    pos,
 				Timestamp:   time.Now().UnixMilli(),
 			},
 			Timestamp: time.Now().UnixMilli(),
