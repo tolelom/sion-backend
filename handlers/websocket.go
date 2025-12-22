@@ -400,7 +400,11 @@ func HandleWebClientWebSocket(c *websocket.Conn) {
 						}
 
 						Manager.BroadcastMessage(responseMsg)
-						log.Printf("✅ AI 응답 전송: %s", response[:min(50, len(response))])+"...")
+						if len(response) > 50 {
+							log.Printf("✅ AI 응답 전송: %s...", response[:50])
+						} else {
+							log.Printf("✅ AI 응답 전송: %s", response)
+						}
 					}()
 
 				}
