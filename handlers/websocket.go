@@ -276,12 +276,26 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 				if err != nil {
 					log.Printf("[AGV] 상태 업데이트 실패: %v", err)
 				}
+
+				// ★ 중요: 모든 웹 클라이언트에게 명시적으로 AGV 상태 브로드캐스트
+				statuses := AGVMgr.GetAllStatuses()
+				if len(statuses) > 0 {
+					statusMsg := models.WebSocketMessage{
+						Type: "agv_status_update",
+						Data: map[string]interface{}{
+							"agvs": statuses,
+						},
+						Timestamp: time.Now().UnixMilli(),
+					}
+					Manager.BroadcastMessage(statusMsg)
+					log.Printf("[AGV] 웹에 브로드캐스트: %d개 AGV 상태", len(statuses))
+				}
 			}
 
 			// 로깅
 			go services.LogAGVEvent(msg, agvID, "agv")
 
-			// 웹 클라이언트에 브로드캐스트
+			// 원본 메시지도 브로드캐스트 (로깅용)
 			Manager.BroadcastMessage(msg)
 
 		default:
@@ -316,6 +330,22 @@ func HandleWebClientWebSocket(c *websocket.Conn) {
 		Timestamp: time.Now().UnixMilli(),
 	}
 	_ = c.WriteJSON(welcomeMsg)
+
+	// ★ 신규: 연결 시 현재 모든 AGV 상태 전송
+	if AGVMgr != nil {
+		statuses := AGVMgr.GetAllStatuses()
+		if len(statuses) > 0 {
+			initialMsg := models.WebSocketMessage{
+				Type: "agv_status_update",
+				Data: map[string]interface{}{
+					"agvs": statuses,
+				},
+				Timestamp: time.Now().UnixMilli(),
+			}
+			_ = c.WriteJSON(initialMsg)
+			log.Printf("[Web] 초기 AGV 상태 전송: %d개", len(statuses))
+		}
+	}
 
 	for {
 		var msg models.WebSocketMessage
@@ -370,7 +400,7 @@ func HandleWebClientWebSocket(c *websocket.Conn) {
 						}
 
 						Manager.BroadcastMessage(responseMsg)
-						log.Printf("✅ AI 응답 전송: %s", response[:min(50, len(response))]+"...")
+						log.Printf("✅ AI 응답 전송: %s", response[:min(50, len(response))])+"...")
 					}()
 
 				}
