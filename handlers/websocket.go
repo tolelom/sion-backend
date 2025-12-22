@@ -183,7 +183,7 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 			}
 
 			if AGVMgr != nil {
-				info, err := AGVMgr.RegisterAGV(reg.AgentID)
+				_, err := AGVMgr.RegisterAGV(reg.AgentID)
 				if err != nil {
 					log.Printf("[AGV] 등록 실패: %v", err)
 					continue
