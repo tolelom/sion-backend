@@ -42,7 +42,7 @@ func HandleChat(c *fiber.Ctx) error {
 	log.Printf("💬 채팅 수신: %s", chatData.Message)
 
 	// LLM에 질문
-	response, err := llmService.AnswerQuestion(chatData.Message, currentAGVStatus)
+	response, err := llmService.Chat(chatData.Message)
 	if err != nil {
 		log.Printf("❌ LLM 오류: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -79,7 +79,8 @@ func ExplainAGVEvent(eventType string, agvStatus *models.AGVStatus) {
 
 	// 비동기로 처리
 	go func() {
-		explanation, err := llmService.ExplainEvent(eventType, agvStatus)
+		// GenerateCommentary 메서드 사용
+		explanation, err := llmService.GenerateCommentary(eventType, "AGV 이벤트 발생")
 		if err != nil {
 			log.Printf("❌ 이벤트 설명 생성 실패: %v", err)
 			return
