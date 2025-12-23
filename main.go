@@ -324,7 +324,7 @@ func main() {
 	})
 
 	app.Get("/websocket/agv", websocket.New(handlers.HandleAGVWebSocket))
-	app.Get("/websocket/web", websocket.New(handlers.HandleWebClientWebSocket))
+	app.Get("/websocket/web", websocket.New(handlers.HandleWebWebSocket))
 
 	log.Println("================================================")
 	log.Println("🚀 Sion Backend Server")
