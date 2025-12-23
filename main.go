@@ -16,6 +16,7 @@ import (
 
 var agvSimulator *services.AGVSimulator
 var agvMgr *handlers.AGVManager
+var commentaryService *services.CommentaryService // 🆕 자동 중계 서비스
 
 func setupAGVAPI(api fiber.Router, agvMgr *handlers.AGVManager) {
 	agvAPI := api.Group("/agv")
@@ -70,6 +71,70 @@ func setupAGVAPI(api fiber.Router, agvMgr *handlers.AGVManager) {
 	})
 }
 
+// 🆕 자동 중계 API 설정
+func setupCommentaryAPI(api fiber.Router) {
+	commentaryAPI := api.Group("/commentary")
+
+	// 자동 중계 상태 조회
+	commentaryAPI.Get("/status", func(c *fiber.Ctx) error {
+		if commentaryService == nil {
+			return c.JSON(fiber.Map{
+				"success": false,
+				"error":   "Commentary service not initialized",
+			})
+		}
+		return c.JSON(fiber.Map{
+			"success": true,
+			"enabled": true, // TODO: 실제 상태 반환
+		})
+	})
+
+	// 자동 중계 활성화/비활성화
+	commentaryAPI.Post("/toggle", func(c *fiber.Ctx) error {
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{
+				"success": false,
+				"error":   "Invalid request body",
+			})
+		}
+
+		if commentaryService != nil {
+			commentaryService.SetEnabled(body.Enabled)
+		}
+
+		return c.JSON(fiber.Map{
+			"success": true,
+			"enabled": body.Enabled,
+		})
+	})
+
+	// 수동 해설 트리거 (테스트용)
+	commentaryAPI.Post("/trigger", func(c *fiber.Ctx) error {
+		var body struct {
+			EventType string                 `json:"event_type"`
+			Data      map[string]interface{} `json:"data"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{
+				"success": false,
+				"error":   "Invalid request body",
+			})
+		}
+
+		if commentaryService != nil {
+			commentaryService.QueueEvent(body.EventType, body.Data)
+		}
+
+		return c.JSON(fiber.Map{
+			"success":    true,
+			"event_type": body.EventType,
+		})
+	})
+}
+
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("⚠️  .env file not found")
@@ -83,7 +148,22 @@ func main() {
 	defer services.StopLogging()
 
 	handlers.InitLLMService()
+
+	// 🆕 자동 중계 서비스 초기화
+	llmService := services.NewLLMServiceFromEnv()
+	commentaryService = services.NewCommentaryService(llmService, handlers.Manager.BroadcastMessage)
+	commentaryService.Start()
+	defer commentaryService.Stop()
+
+	// 🆕 전역 변수로 설정 (다른 패키지에서 접근 가능)
+	handlers.CommentarySvc = commentaryService
+
+	log.Println("[Main] ✅ Commentary Service initialized")
+
 	agvSimulator = services.NewAGVSimulator(handlers.Manager.BroadcastMessage)
+
+	// 🆕 시뮬레이터에 자동 중계 서비스 연결
+	agvSimulator.SetCommentaryService(commentaryService)
 
 	agvMgr = handlers.NewAGVManager()
 	handlers.AGVMgr = agvMgr
@@ -119,11 +199,12 @@ func main() {
 
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"status":         "OK",
-			"clients":        handlers.Manager.GetClientCount(),
-			"connected_agvs": agvMgr.GetConnectedAGVs(),
-			"agv_count":      agvMgr.GetAGVCount(),
-			"time":           time.Now().Format(time.RFC3339),
+			"status":             "OK",
+			"clients":            handlers.Manager.GetClientCount(),
+			"connected_agvs":     agvMgr.GetConnectedAGVs(),
+			"agv_count":          agvMgr.GetAGVCount(),
+			"commentary_enabled": true, // 🆕
+			"time":               time.Now().Format(time.RFC3339),
 		})
 	})
 
@@ -137,6 +218,7 @@ func main() {
 	logsAPI.Get("/stats", handlers.HandleGetLogStats)
 
 	setupAGVAPI(api, agvMgr)
+	setupCommentaryAPI(api) // 🆕 자동 중계 API
 
 	simAPI := api.Group("/simulator")
 	simAPI.Post("/start", func(c *fiber.Ctx) error {
@@ -166,7 +248,7 @@ func main() {
 				X:         10.5,
 				Y:         15.2,
 				Angle:     1.57,
-				Timestamp: float64(time.Now().UnixMilli()) / 1000.0, // ✅ float64 Unix timestamp
+				Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
 			},
 			Timestamp: time.Now().UnixMilli(),
 		}
@@ -199,7 +281,7 @@ func main() {
 				X:         10.5,
 				Y:         15.2,
 				Angle:     0.785,
-				Timestamp: float64(time.Now().UnixMilli()) / 1000.0, // ✅ float64 Unix timestamp
+				Timestamp: float64(time.Now().UnixMilli()) / 1000.0,
 			},
 			Mode:    models.ModeAuto,
 			State:   models.StateCharging,
@@ -209,6 +291,28 @@ func main() {
 		services.LogAGVStatus("sion-001", testStatus)
 		handlers.ExplainAGVEvent("target_change", testStatus)
 		return c.JSON(fiber.Map{"success": true})
+	})
+
+	// 🆕 자동 중계 테스트 엔드포인트
+	api.Post("/test/commentary", func(c *fiber.Ctx) error {
+		if commentaryService == nil {
+			return c.Status(500).JSON(fiber.Map{
+				"success": false,
+				"error":   "Commentary service not initialized",
+			})
+		}
+
+		// 테스트 이벤트 발생
+		commentaryService.QueueEvent("target_found", map[string]interface{}{
+			"enemy_name": "아리",
+			"enemy_hp":   75,
+			"distance":   5.5,
+		})
+
+		return c.JSON(fiber.Map{
+			"success": true,
+			"message": "Commentary test event queued",
+		})
 	})
 
 	app.Use("/websocket", func(c *fiber.Ctx) error {
@@ -228,6 +332,7 @@ func main() {
 	log.Println("📡 WebSocket AGV: ws://localhost:3000/websocket/agv")
 	log.Println("📡 WebSocket Web: ws://localhost:3000/websocket/web")
 	log.Println("🔍 AGV Status:    GET /api/agv/all")
+	log.Println("🎙️ Commentary:    POST /api/commentary/toggle")
 	log.Println("💾 Health Check:  GET /api/health")
 	log.Println("================================================")
 

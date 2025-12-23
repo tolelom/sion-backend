@@ -6,198 +6,170 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"os"
-	"sion-backend/models"
 	"time"
 )
 
-// LLMService - LLM API 통신 서비스
+// LLMService - LLM 서비스 (Ollama 또는 OpenAI 호환)
 type LLMService struct {
-	BaseURL string
-	Model   string
+	BaseURL    string
+	Model      string
+	APIKey     string // OpenAI 호환 API용
+	HTTPClient *http.Client
 }
 
-// NewLLMServiceFromEnv - 환경 변수에서 Ollama 설정 읽기
+// OllamaRequest - Ollama API 요청
+type OllamaRequest struct {
+	Model    string          `json:"model"`
+	Messages []OllamaMessage `json:"messages"`
+	Stream   bool            `json:"stream"`
+	Options  *OllamaOptions  `json:"options,omitempty"`
+}
+
+// OllamaMessage - Ollama 메시지
+type OllamaMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// OllamaOptions - Ollama 옵션
+type OllamaOptions struct {
+	Temperature float64 `json:"temperature,omitempty"`
+	MaxTokens   int     `json:"num_predict,omitempty"`
+}
+
+// OllamaResponse - Ollama API 응답
+type OllamaResponse struct {
+	Model     string        `json:"model"`
+	CreatedAt string        `json:"created_at"`
+	Message   OllamaMessage `json:"message"`
+	Done      bool          `json:"done"`
+}
+
+// NewLLMService - LLM 서비스 생성
+func NewLLMService(baseURL, model string) *LLMService {
+	return &LLMService{
+		BaseURL: baseURL,
+		Model:   model,
+		HTTPClient: &http.Client{
+			Timeout: 60 * time.Second,
+		},
+	}
+}
+
+// NewLLMServiceFromEnv - 환경변수에서 LLM 서비스 생성
 func NewLLMServiceFromEnv() *LLMService {
-	baseURL := os.Getenv("OLLAMA_BASE_URL")
+	baseURL := os.Getenv("LLM_BASE_URL")
 	if baseURL == "" {
-		baseURL = "http://localhost:11434"
+		baseURL = "http://localhost:11434" // 기본 Ollama 주소
 	}
 
-	model := os.Getenv("OLLAMA_MODEL")
+	model := os.Getenv("LLM_MODEL")
 	if model == "" {
-		model = "llama3.2"
+		model = "llama3.2" // 기본 모델
 	}
 
-	log.Printf("✅ LLMService 초기화 (provider=ollama, baseURL=%s, model=%s)", baseURL, model)
+	apiKey := os.Getenv("LLM_API_KEY") // OpenAI 호환 API용
+
+	log.Printf("🤖 LLM Service: %s (model: %s)", baseURL, model)
 
 	return &LLMService{
 		BaseURL: baseURL,
 		Model:   model,
+		APIKey:  apiKey,
+		HTTPClient: &http.Client{
+			Timeout: 60 * time.Second,
+		},
 	}
 }
 
-// AnswerQuestion - 사용자 질문에 답변 (WebSocket에서 호출)
-func (s *LLMService) AnswerQuestion(question string, agvStatus *models.AGVStatus) (string, error) {
-	systemPrompt := `당신은 AGV 로봇 "사이온"의 AI 해설자입니다.
-리그오브레전드의 사이온 캐릭터처럼 용감하고 적극적인 톤으로 설명하세요.
-사용자의 질문에 현재 AGV의 상태를 기반으로 명확하고 간결하게 답변하세요.
-AGV 상태 정보가 없으면, 일반적인 사이온 컨셉에 맞게 대답하세요.
-답변은 3-4문장 이내로 작성하세요.`
-
-	var userPrompt string
-	if agvStatus != nil {
-		userPrompt = fmt.Sprintf(`[사용자 질문]
-%s
-
-[현재 AGV 상태]
-- 위치: (%.1f, %.1f), 각도: %.1f°
-- 모드: %s
-- 상태: %s
-- 배터리: %d%%
-- 속도: %.1f m/s
-
-`, question,
-			agvStatus.Position.X,
-			agvStatus.Position.Y,
-			agvStatus.Position.Angle*180/math.Pi,
-			agvStatus.Mode,
-			agvStatus.State,
-			agvStatus.Battery,
-			agvStatus.Speed)
-
-		if agvStatus.TargetEnemy != nil {
-			userPrompt += fmt.Sprintf("- 현재 타겟: %s (체력 %d%%)\n",
-				agvStatus.TargetEnemy.Name, agvStatus.TargetEnemy.HP)
-		}
-
-		if len(agvStatus.DetectedEnemies) > 0 {
-			userPrompt += "\n[감지된 적]\n"
-			for i, enemy := range agvStatus.DetectedEnemies {
-				dist := calculateDistance(agvStatus.Position, enemy.Position)
-				userPrompt += fmt.Sprintf("- 적 #%d: %s (체력 %d%%, 거리 %.1fm)\n",
-					i+1, enemy.Name, enemy.HP, dist)
-			}
-		}
-
-		userPrompt += "\n위 정보를 바탕으로 질문에 답변해주세요."
-	} else {
-		userPrompt = fmt.Sprintf(`[사용자 질문]
-%s
-
-AGV 상태 정보는 아직 없습니다. 사이온의 캐릭터성과 전투 스타일에 기반해 답변해주세요.`, question)
+// callOllama - Ollama API 호출
+func (ls *LLMService) callOllama(systemPrompt, userPrompt string) (string, error) {
+	messages := []OllamaMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
 	}
 
-	log.Printf("🤖 LLM 호출 (Ollama, model=%s): %s", s.Model, question)
-	return s.callOllama(systemPrompt, userPrompt)
-}
-
-// ExplainEvent - AGV 이벤트 설명 생성
-func (s *LLMService) ExplainEvent(eventType string, agvStatus *models.AGVStatus) (string, error) {
-	systemPrompt := `당신은 AGV 로봇 "사이온"의 실시간 해설자입니다.
-사이온의 행동을 마치 e스포츠 해설처럼 열정적이고 명확하게 설명하세요.
-2-3문장으로 간결하게 작성하세요.`
-
-	var userPrompt string
-
-	switch eventType {
-	case "target_change":
-		if agvStatus != nil && agvStatus.TargetEnemy != nil {
-			userPrompt = fmt.Sprintf(`[타겟 변경 이벤트 🎯]
-현재 시각: %s
-새로운 타겟: %s (체력 %d%%)
-위치: (%.1f, %.1f)
-
-왜 이 타겟을 선택했는지 설명해주세요.`,
-				time.Now().Format("15:04:05"),
-				agvStatus.TargetEnemy.Name,
-				agvStatus.TargetEnemy.HP,
-				agvStatus.Position.X,
-				agvStatus.Position.Y)
-		}
-
-	case "charging":
-		if agvStatus != nil {
-			userPrompt = fmt.Sprintf(`[돌진 공격! ⚔️]
-현재 시각: %s
-사이온이 궁극기를 사용합니다!
-위치: (%.1f, %.1f)
-속도: %.1f m/s`,
-				time.Now().Format("15:04:05"),
-				agvStatus.Position.X,
-				agvStatus.Position.Y,
-				agvStatus.Speed)
-		}
-
-	default:
-		userPrompt = fmt.Sprintf("[이벤트: %s] 현재 상황을 설명해주세요.", eventType)
+	reqBody := OllamaRequest{
+		Model:    ls.Model,
+		Messages: messages,
+		Stream:   false,
+		Options: &OllamaOptions{
+			Temperature: 0.7,
+			MaxTokens:   200,
+		},
 	}
 
-	if userPrompt == "" {
-		userPrompt = fmt.Sprintf("[이벤트: %s] 현재 상황을 설명해주세요.", eventType)
-	}
-
-	return s.callOllama(systemPrompt, userPrompt)
-}
-
-func (s *LLMService) callOllama(systemPrompt, userPrompt string) (string, error) {
-	start := time.Now() // ⏱️ 시작 시간
-
-	fullPrompt := systemPrompt + "\n\n" + userPrompt
-
-	body := map[string]interface{}{
-		"model":  s.Model,
-		"prompt": fullPrompt,
-		"stream": false,
-	}
-
-	jsonData, err := json.Marshal(body)
+	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("ollama 요청 JSON 마샬링 실패: %v", err)
+		return "", fmt.Errorf("JSON 마샬링 실패: %w", err)
 	}
 
-	url := s.BaseURL + "/api/generate"
+	url := fmt.Sprintf("%s/api/chat", ls.BaseURL)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("ollama 요청 생성 실패: %v", err)
+		return "", fmt.Errorf("요청 생성 실패: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if ls.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+ls.APIKey)
+	}
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := ls.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("ollama 호출 실패: %v", err)
+		return "", fmt.Errorf("LLM 요청 실패: %w", err)
 	}
 	defer resp.Body.Close()
 
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("ollama 응답 읽기 실패: %v", err)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("LLM 응답 오류 (%d): %s", resp.StatusCode, string(body))
 	}
 
-	var result struct {
-		Response string `json:"response"`
+	var ollamaResp OllamaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		return "", fmt.Errorf("응답 파싱 실패: %w", err)
 	}
 
-	if err := json.Unmarshal(b, &result); err != nil {
-		return "", fmt.Errorf("ollama 응답 파싱 실패: %v (body=%s)", err, string(b))
-	}
-
-	if result.Response == "" {
-		return "", fmt.Errorf("ollama 응답이 비어있습니다: %s", string(b))
-	}
-
-	elapsed := time.Since(start) // ⏱️ 소요 시간
-	log.Printf("⏱️ Ollama 응답 시간: %.2f초 (모델: %s)", elapsed.Seconds(), s.Model)
-
-	return result.Response, nil
+	return ollamaResp.Message.Content, nil
 }
 
-func calculateDistance(pos1, pos2 models.PositionData) float64 {
-	dx := pos1.X - pos2.X
-	dy := pos1.Y - pos2.Y
-	return math.Sqrt(dx*dx + dy*dy)
+// GenerateCommentary - 해설 생성 (외부에서 호출 가능)
+func (ls *LLMService) GenerateCommentary(eventType, context string) (string, error) {
+	systemPrompt := `당신은 AGV 로봇 "사이온"의 실시간 e스포츠 해설자입니다.
+
+🎙️ 해설 스타일:
+- 열정적이고 흥분된 톤
+- 짧고 임팩트 있는 문장 (2-3문장)
+- 리그오브레전드 사이온 캐릭터의 특성 반영
+- 한국어 e스포츠 중계 스타일
+- 이모지 적절히 사용
+
+⚠️ 주의사항:
+- 반드시 2-3문장으로 짧게
+- 기술적인 용어보다 재미있는 표현 사용`
+
+	return ls.callOllama(systemPrompt, context)
+}
+
+// Chat - 일반 채팅 응답
+func (ls *LLMService) Chat(userMessage string) (string, error) {
+	systemPrompt := `당신은 AGV 로봇 "사이온"입니다.
+리그오브레전드의 사이온 캐릭터처럼 강인하고 불굴의 의지를 가진 성격으로 대화합니다.
+짧고 간결하게 답변하세요.`
+
+	return ls.callOllama(systemPrompt, userMessage)
+}
+
+// IsAvailable - LLM 서비스 사용 가능 여부 확인
+func (ls *LLMService) IsAvailable() bool {
+	url := fmt.Sprintf("%s/api/tags", ls.BaseURL)
+	resp, err := ls.HTTPClient.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
