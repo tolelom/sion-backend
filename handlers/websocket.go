@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofiber/contrib/websocket"
+	"github.com/gofiber/websocket/v2"
 )
 
 // 메시지 타입 정의
@@ -51,7 +51,7 @@ type Client struct {
 	mu         sync.Mutex
 }
 
-// 허브 관리자
+// 멜룄 관리자
 type Hub struct {
 	agvClients map[string]*Client
 	webClients map[*websocket.Conn]*Client
@@ -62,7 +62,7 @@ type Hub struct {
 	mu         sync.RWMutex
 }
 
-// 맵 데이터 (임시 저장)
+// 맥 데이터 (임시 저장)
 type MapData struct {
 	Width         int          `json:"width"`
 	Height        int          `json:"height"`
@@ -76,7 +76,7 @@ var (
 	currentMap *MapData
 )
 
-// 허브 초기화
+// 멜룄 초기화
 func init() {
 	hub = &Hub{
 		agvClients: make(map[string]*Client),
@@ -87,7 +87,7 @@ func init() {
 		unregister: make(chan *Client),
 	}
 
-	// 기본 맵 데이터 초기화
+	// 기본 맥 데이터 초기화
 	currentMap = &MapData{
 		Width:         60,
 		Height:        60,
@@ -97,7 +97,7 @@ func init() {
 	}
 }
 
-// 허브 시작
+// 멜룄 시작
 func StartHub() {
 	go hub.run()
 	go hub.monitorConnections()
@@ -176,7 +176,7 @@ func (h *Hub) monitorConnections() {
 		}
 
 		// 현재 연결 상태 로그
-		log.Printf("📊 연결 상태: AGV=%d, Web=%d",
+		log.Printf("📋 연결 상태: AGV=%d, Web=%d",
 			len(h.agvClients), len(h.webClients))
 		h.mu.RUnlock()
 	}
@@ -217,7 +217,7 @@ func (h *Hub) broadcastConnectionStatus() {
 	select {
 	case h.broadcast <- data:
 	default:
-		log.Println("⚠️ broadcast 채널 가득 참")
+		log.Println("⚠️ broadcast 채널 가득 찥")
 	}
 }
 
@@ -278,7 +278,7 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 
 			log.Printf("✅ AGV %s 초기화 완료", client.AGVID)
 
-			// 맵 데이터 전송
+			// 맥 데이터 전송
 			sendMapData(client)
 
 		case MsgTypePosition:
@@ -299,7 +299,7 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 		case MsgTypeStatus:
 			// 상태 데이터 Web 클라이언트에 브로드캐스트
 			hub.broadcast <- msg
-			log.Printf("📊 AGV %s 상태: %v", client.AGVID, wsMsg.Data)
+			log.Printf("📋 AGV %s 상태: %v", client.AGVID, wsMsg.Data)
 
 		case MsgTypeLog:
 			// 로그 데이터 Web 클라이언트에 브로드캐스트
@@ -316,7 +316,7 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 			case "error":
 				log.Printf("❌ [%s] %s: %s", client.AGVID, event, message)
 			default:
-				log.Printf("📝 [%s] %s: %s", client.AGVID, event, message)
+				log.Printf("📏 [%s] %s: %s", client.AGVID, event, message)
 			}
 
 			// TODO: DB에 로그 저장
@@ -339,7 +339,7 @@ func HandleAGVWebSocket(c *websocket.Conn) {
 	}
 }
 
-// 맵 데이터 전송
+// 맥 데이터 전송
 func sendMapData(client *Client) {
 	mapMsg := WSMessage{
 		Type:      MsgTypeMapData,
@@ -356,7 +356,7 @@ func sendMapData(client *Client) {
 	client.mu.Lock()
 	client.Conn.WriteMessage(websocket.TextMessage, data)
 	client.mu.Unlock()
-	log.Printf("🗺️ 맵 데이터 전송: %s", client.AGVID)
+	log.Printf("🗷️ 맥 데이터 전송: %s", client.AGVID)
 }
 
 // Web WebSocket 핸들러
@@ -399,7 +399,7 @@ func HandleWebWebSocket(c *websocket.Conn) {
 		switch wsMsg.Type {
 		case MsgTypeCommand:
 			// AGV에 명령 전달
-			log.Printf("🎮 명령 전달: %v", wsMsg.Data)
+			log.Printf("🅶 명령 전달: %v", wsMsg.Data)
 			hub.toAGV <- msg
 
 		case MsgTypeModeChange:
@@ -409,7 +409,7 @@ func HandleWebWebSocket(c *websocket.Conn) {
 
 		case MsgTypeEmergencyStop:
 			// 긴급 정지 명령 전달
-			log.Printf("🛑 긴급 정지 명령!")
+			log.Printf("🛱 긴급 정지 명령!")
 			hub.toAGV <- msg
 
 		case "get_status":
@@ -422,12 +422,12 @@ func HandleWebWebSocket(c *websocket.Conn) {
 	}
 }
 
-// 맵 데이터 업데이트 (외부에서 호출)
+// 맥 데이터 업데이트 (외부에서 호출)
 func UpdateMapData(mapData *MapData) {
 	currentMap = mapData
-	log.Printf("🗺️ 맵 데이터 업데이트: %dx%d", mapData.Width, mapData.Height)
+	log.Printf("🗷️ 맥 데이터 업데이트: %dx%d", mapData.Width, mapData.Height)
 
-	// 연결된 모든 AGV에 맵 데이터 전송
+	// 연결된 모든 AGV에 맥 데이터 전송
 	hub.mu.RLock()
 	for _, client := range hub.agvClients {
 		sendMapData(client)
@@ -449,7 +449,7 @@ func SendCommandToAGV(action string, target map[string]float64) {
 	hub.toAGV <- data
 }
 
-// 연결된 AGV 목록 반환
+// 연결된 AGV 모니 반환
 func GetConnectedAGVs() []string {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
