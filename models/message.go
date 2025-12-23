@@ -25,8 +25,14 @@ const (
 	MessageTypeLLMExplanation = "llm_explanation" // AI 설명
 	MessageTypeTTS            = "tts"             // 음성 중계
 
+	// 🗺️ Map 관련 (Phase 3)
+	MessageTypeMapGrid      = "map_grid"       // 전체 맵 데이터 전송
+	MessageTypeMapUpdate    = "map_update"     // 맵 업데이트
+	MessageTypeGoalSet      = "goal_set"       // 목표 지점 설정
+	MessageTypeAGVCommand   = "agv_command"    // AGV 명령 전송
+	MessageTypeSystemReady  = "system_ready"   // 시스템 준비 완료
+
 	// Server → All
-	MessageTypeMapUpdate  = "map_update"  // 맵 업데이트
 	MessageTypeSystemInfo = "system_info" // 시스템 정보
 )
 
@@ -117,15 +123,33 @@ type ChatMessageData struct {
 
 // ChatResponseData - AI 응답 데이터
 type ChatResponseData struct {
-	Message   string `json:"message"`            // AI 응답
-	Model     string `json:"model,omitempty"`   // 사용된 모델
-	Timestamp int64  `json:"timestamp"`         // Unix timestamp in milliseconds
+	Message   string `json:"message"`          // AI 응답
+	Model     string `json:"model,omitempty"` // 사용된 모델
+	Timestamp int64  `json:"timestamp"`       // Unix timestamp in milliseconds
 }
 
 // AGVEventData - AGV 이벤트 설명 데이터
 type AGVEventData struct {
-	EventType   string          `json:"event_type"` // "target_change", "path_start", "charging", "avoid_obstacle"
-	Explanation string          `json:"explanation"`
-	Position    *PositionData   `json:"position,omitempty"` // 이벤트 발생 위치 (옵션)
-	Timestamp   int64           `json:"timestamp"`          // Unix timestamp in milliseconds
+	EventType   string        `json:"event_type"` // "target_change", "path_start", "charging", "avoid_obstacle"
+	Explanation string        `json:"explanation"`
+	Position    *PositionData `json:"position,omitempty"` // 이벤트 발생 위치 (옵션)
+	Timestamp   int64         `json:"timestamp"`          // Unix timestamp in milliseconds
+}
+
+// ========================================
+// 🗺️ Map 관련 메시지 데이터 (Phase 3)
+// ========================================
+
+// SystemReadyData - 시스템 준비 완료 알림
+type SystemReadyData struct {
+	AGVCount     int  `json:"agv_count"`     // 연결된 AGV 수
+	ClientCount  int  `json:"client_count"`  // 연결된 클라이언트 수
+	MapGenerated bool `json:"map_generated"` // 맵 생성 여부
+}
+
+// GoalSetData - 목표 지점 설정 데이터
+type GoalSetData struct {
+	GoalID   string   `json:"goal_id"`
+	Position Position `json:"position"`
+	Radius   float64  `json:"radius"`
 }
